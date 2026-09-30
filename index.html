@@ -98,9 +98,10 @@ function setNet(ok) {
 }
 function saveQ() { ls.set('presensi_queue', JSON.stringify(queue)); setNet(!$('net').classList.contains('off')); }
 
-async function api(action, payload) {
+const READS = ['getConfig', 'listStudents', 'listFaceDelta'];
+async function api(action, payload, retried) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
+  const timer = setTimeout(() => ctl.abort(), 30000);
   const fail = (m, extra) => Object.assign(new Error(m), extra);
   let res;
   try {
@@ -110,8 +111,9 @@ async function api(action, payload) {
       body: JSON.stringify({ action, payload: payload || {}, token: ls.get('presensi_token'), pelaku: 'kiosk-lab' }),
     });
   } catch (e) {
+    if (!retried && READS.indexOf(action) >= 0) return api(action, payload, true);
     setNet(false);
-    throw fail('Tidak dapat menghubungi server', { net: true });
+    throw fail('Tidak dapat menghubungi server. Periksa internet, lalu klik Mulai Presensi lagi.', { net: true });
   } finally { clearTimeout(timer); }
   let body;
   try { body = await res.json(); } catch (e) {
