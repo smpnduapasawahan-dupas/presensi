@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin - Pendaftaran Wajah</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--tx:#f1f5f9;--mu:#a8b3c7;--ok:#22c55e;--warn:#f59e0b;--err:#f87171;--pri:#38bdf8}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel)}
+h1{font-size:1.15rem;margin:0}
+#sum{color:var(--mu);font-size:.9rem}
+button,input,select{font:inherit;color:inherit}
+button{min-height:44px;padding:0 16px;border-radius:10px;border:2px solid #475569;background:transparent;cursor:pointer;font-weight:600}
+button.p{background:var(--pri);border-color:var(--pri);color:#04202e}
+button:disabled{opacity:.55;cursor:wait}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--pri);outline-offset:2px}
+input,select{min-height:44px;padding:0 12px;border-radius:10px;border:2px solid #475569;background:var(--bg)}
+.tools{display:flex;flex-wrap:wrap;gap:10px;padding:16px 20px}
+.tools input{flex:1;min-width:200px}
+.tw{padding:0 20px 80px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #334155}
+th{color:var(--mu);font-size:.85rem;font-weight:600}
+.b{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.85rem;font-weight:600}
+.b.ok{background:#14532d;color:#bbf7d0}.b.no{background:#78350f;color:#fde68a}
+td.a{display:flex;gap:8px;flex-wrap:wrap}
+.overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9}
+.box{background:var(--panel);border-radius:16px;padding:28px;width:100%;max-width:440px;display:flex;flex-direction:column;gap:10px}
+#lm,#dm{min-height:1.5em;margin:0;color:var(--mu)}
+.e{color:var(--err)!important}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ok);color:#04220f;padding:10px 20px;border-radius:99px;font-weight:700}
+dialog{background:var(--panel);color:var(--tx);border:0;border-radius:16px;padding:20px;width:min(560px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.7)}
+video{width:100%;border-radius:12px;background:#000;transform:scaleX(-1);display:block;aspect-ratio:4/3;object-fit:cover}
+#gd{font-size:1.3rem;font-weight:700;margin:10px 0 0}
+.row{display:flex;gap:10px;margin-top:12px}
+.row button{flex:1}
+</style>
+</head>
+<body>
+<div id="login" class="overlay">
+  <div class="box">
+    <h1>Admin - Pendaftaran Wajah</h1>
+    <label for="tok">Token admin (awalan admin_)</label>
+    <input id="tok" type="password" autocomplete="off" spellcheck="false">
+    <label for="nm">Nama Anda (untuk catatan audit)</label>
+    <input id="nm" type="text" autocomplete="off" maxlength="40">
+    <button id="go" class="p">Masuk</button>
+    <p id="lm" role="alert"></p>
+  </div>
+</div>
+<header>
+  <div><h1 id="school">Admin</h1><div id="sum"></div></div>
+  <button id="out">Keluar</button>
+</header>
+<div class="tools">
+  <input id="q" type="search" placeholder="Cari nama atau NISN" aria-label="Cari siswa">
+  <select id="fk" aria-label="Filter kelas"><option value="">Semua kelas</option></select>
+  <select id="ff" aria-label="Filter status wajah">
+    <option value="">Semua status</option><option value="belum">Belum terdaftar</option><option value="sudah">Sudah terdaftar</option>
+  </select>
+</div>
+<div class="tw">
+  <table>
+    <thead><tr><th>Nama</th><th>Kelas</th><th>NISN</th><th>Wajah</th><th>Aksi</th></tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+</div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="dlg" aria-labelledby="dt">
+  <h2 id="dt" style="margin:0 0 10px;font-size:1.1rem"></h2>
+  <video id="v" autoplay muted playsinline></video>
+  <p id="gd"></p>
+  <p id="dm" role="status" aria-live="polite"></p>
+  <div class="row"><button id="cls">Batal</button><button id="cap" class="p">Ambil sampel</button></div>
+</dialog>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+<script>
+'use strict';
+const API = 'https://script.google.com/macros/s/AKfycbxPgjuZoWTHpU4rEdswTsehppv_xOGKWqeWhWQjXU94gPQGyh1nvKjV6li3Lbw4Z92p/exec';
+const MODEL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
+const SAMPLES = 3;
+const GUIDE = ['Wajah lurus ke kamera', 'Menoleh sedikit ke kiri', 'Menoleh sedikit ke kanan'];
+const $ = (id) => document.getElementById(id);
+const ss = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) { /* diabaikan */ } },
+};
+const students = new Map(), faces = new Map();
+let cfg, faceVer = 0, cur = null, caps = [], stream = null, modelsP = null;
+
+async function api(action, payload, retried) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 30000);
+  const fail = (m, extra) => Object.assign(new Error(m), extra);
+  let res;
+  try {
+    res = await fetch(API, {
+      method: 'POST', redirect: 'follow', signal: ctl.signal,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, payload: payload || {}, token: ss.get('admin_token'), pelaku: ss.get('admin_name') || 'admin' }),
+    });
+  } catch (e) {
+    if (!retried && /^(get|list)/.test(action)) return api(action, payload, true);
+    throw fail('Tidak dapat menghubungi server. Periksa internet lalu coba lagi.', { net: true });
+  } finally { clearTimeout(timer); }
+  let body;
+  try { body = await res.json(); } catch (e) { throw fail('Balasan server tidak valid.', { net: true }); }
+  if (!body.ok) throw fail(body.message || 'Kesalahan server', { code: body.error });
+  return body.data;
+}
+
+function withTimeout(p, ms) {
+  return Promise.race([p, new Promise((_, rj) => setTimeout(() => rj(Object.assign(new Error('Waktu habis'), { name: 'Timeout' })), ms))]);
+}
+function toast(t) {
+  const n = $('toast'); n.textContent = t; n.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { n.hidden = true; }, 5000);
+}
+function lmsg(t, err) { const m = $('lm'); m.textContent = t; m.className = err ? 'e' : ''; }
+function dmsg(t, err) { const m = $('dm'); m.textContent = t; m.className = err ? 'e' : ''; }
+
+async function syncFaces() {
+  let since = faceVer;
+  for (;;) {
+    const d = await api('listFaceDelta', { sinceVersi: since, limit: 400 });
+    if (d.perlu_sinkron_ulang) { faces.clear(); since = 0; continue; }
+    d.items.forEach((i) => {
+      if (i.aktif && i.embedding) faces.set(i.id_sampel, { sid: i.id_siswa, vec: i.embedding });
+      else faces.delete(i.id_sampel);
+    });
+    since = d.versi_terakhir;
+    lmsg('Memuat data wajah... ' + faces.size + ' sampel');
+    if (!d.has_more) break;
+  }
+  faceVer = since;
+}
+
+function counts() {
+  const c = new Map();
+  faces.forEach((f) => c.set(f.sid, (c.get(f.sid) || 0) + 1));
+  return c;
+}
+
+function cell(tr, text, cls) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text;
+  tr.appendChild(td);
+  return td;
+}
+function btn(text, fn, cls) {
+  const b = document.createElement('button');
+  b.textContent = text; if (cls) b.className = cls;
+  b.addEventListener('click', fn);
+  return b;
+}
+
+function render() {
+  const q = $('q').value.trim().toLowerCase(), k = $('fk').value, f = $('ff').value;
+  const cnt = counts();
+  let done = 0;
+  students.forEach((s) => { if (cnt.get(s.id)) done++; });
+  $('sum').textContent = students.size + ' siswa aktif \u2022 ' + done + ' sudah terdaftar \u2022 ' + (students.size - done) + ' belum';
+  const tb = $('tb');
+  tb.textContent = '';
+  students.forEach((s) => {
+    const n = cnt.get(s.id) || 0;
+    if (q && !s.nama.toLowerCase().includes(q) && !s.nisn.includes(q)) return;
+    if (k && s.kelas !== k) return;
+    if (f === 'belum' && n > 0) return;
+    if (f === 'sudah' && n === 0) return;
+    const tr = document.createElement('tr');
+    cell(tr, s.nama); cell(tr, s.kelas); cell(tr, s.nisn);
+    const w = cell(tr, '');
+    const b = document.createElement('span');
+    b.className = 'b ' + (n > 0 ? 'ok' : 'no');
+    b.textContent = n > 0 ? '\u2714 ' + n + ' sampel' : '\u26A0 Belum';
+    w.appendChild(b);
+    const a = cell(tr, '', 'a');
+    a.appendChild(btn(n > 0 ? 'Daftar ulang' : 'Daftarkan wajah', () => openReg(s), n > 0 ? '' : 'p'));
+    if (n > 0) a.appendChild(btn('Hapus', () => delFaces(s)));
+    tb.appendChild(tr);
+  });
+  if (!tb.children.length) { const tr = document.createElement('tr'); cell(tr, students.size ? 'Tidak ada siswa yang cocok.' : 'Belum ada siswa. Impor dulu lewat menu Presensi di Google Sheets.'); tb.appendChild(tr); }
+}
+
+function match(vec, skipSid) {
+  let best = Infinity, sid = null;
+  for (const f of faces.values()) {
+    if (f.sid === skipSid || !students.has(f.sid)) continue;
+    let s = 0;
+    for (let i = 0; i < 128; i++) { const x = vec[i] - f.vec[i]; s += x * x; }
+    if (s < best) { best = s; sid = f.sid; }
+  }
+  return { sid, dist: Math.sqrt(best) };
+}
+
+function ensureModels() {
+  if (!modelsP) {
+    modelsP = Promise.all([faceapi.nets.tinyFaceDetector, faceapi.nets.faceLandmark68Net, faceapi.nets.faceRecognitionNet]
+      .map((n) => n.loadFromUri(MODEL))).catch((e) => { modelsP = null; throw e; });
+  }
+  return modelsP;
+}
+
+function updCap() {
+  $('gd').textContent = caps.length < SAMPLES ? 'Sampel ' + (caps.length + 1) + ' dari ' + SAMPLES + ': ' + GUIDE[caps.length] : 'Menyimpan...';
+}
+function stopCam() { if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
+
+async function openReg(s) {
+  cur = s; caps = [];
+  $('dt').textContent = 'Daftarkan wajah: ' + s.nama + ' (' + s.kelas + ')';
+  updCap(); dmsg('Memuat model dan membuka kamera...'); $('cap').disabled = true;
+  $('dlg').showModal();
+  try {
+    await ensureModels();
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }), 20000);
+    $('v').srcObject = stream;
+    await withTimeout($('v').play(), 10000);
+    dmsg('Pastikan wajah terang, tanpa masker/topi, dan hanya satu orang di depan kamera.');
+    $('cap').disabled = false;
+  } catch (e) {
+    const m = { NotAllowedError: 'Izin kamera ditolak.', NotFoundError: 'Kamera tidak ditemukan.', NotReadableError: 'Kamera dipakai aplikasi lain.', Timeout: 'Kamera tidak merespons.' };
+    dmsg(m[e.name] || e.message, true);
+  }
+}
+
+async function capture() {
+  const v = $('v');
+  $('cap').disabled = true;
+  try {
+    const d = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+      .withFaceLandmarks().withFaceDescriptor();
+    if (!d) return dmsg('Wajah tidak terdeteksi. Perbaiki cahaya dan posisi.', true);
+    if (d.detection.score < 0.6) return dmsg('Wajah kurang jelas. Tambah cahaya.', true);
+    if (d.detection.box.width < v.videoWidth * 0.25) return dmsg('Dekatkan wajah ke kamera.', true);
+    caps.push(Array.from(d.descriptor));
+    dmsg('Sampel ' + caps.length + ' berhasil.');
+    if (caps.length >= SAMPLES) await save(); else updCap();
+  } catch (e) {
+    dmsg(e.message, true);
+  } finally { $('cap').disabled = false; }
+}
+
+async function save() {
+  updCap();
+  for (const vec of caps) {
+    const m = match(vec, cur.id);
+    if (m.sid && m.dist <= cfg.ambang_kecocokan) {
+      const o = students.get(m.sid);
+      caps = []; updCap();
+      return dmsg('Wajah ini mirip dengan ' + o.nama + ' (' + o.kelas + '). Pastikan siswanya benar, lalu ulangi.', true);
+    }
+  }
+  dmsg('Menyimpan ke server...');
+  try {
+    if ((counts().get(cur.id) || 0) > 0) await api('deleteFaceSamples', { idSiswa: cur.id });
+    const r = await api('addFaceSamples', { idSiswa: cur.id, embeddings: caps });
+    await syncFaces(); render();
+    $('dlg').close();
+    toast('Wajah ' + cur.nama + ' tersimpan (' + r.total_sampel + ' sampel)');
+  } catch (e) {
+    caps = []; updCap(); dmsg('Gagal menyimpan: ' + e.message, true);
+    syncFaces().then(render).catch(() => {});
+  }
+}
+
+async function delFaces(s) {
+  if (!confirm('Hapus semua data wajah ' + s.nama + '?')) return;
+  try {
+    await api('deleteFaceSamples', { idSiswa: s.id });
+    await syncFaces(); render();
+    toast('Data wajah ' + s.nama + ' dihapus');
+  } catch (e) { toast('Gagal: ' + e.message); }
+}
+
+async function login() {
+  const token = $('tok').value.trim() || ss.get('admin_token');
+  if (!token) return lmsg('Masukkan token admin.', true);
+  ss.set('admin_token', token);
+  ss.set('admin_name', $('nm').value.trim() || ss.get('admin_name') || 'admin');
+  $('go').disabled = true;
+  try {
+    lmsg('Memeriksa token...');
+    await api('getSettings');
+    cfg = await api('getConfig');
+    const list = await api('listStudents');
+    students.clear(); list.siswa.forEach((s) => students.set(s.id, s));
+    await syncFaces();
+  } catch (e) {
+    ss.set('admin_token', '');
+    lmsg(e.code === 'FORBIDDEN' ? 'Ini token scan. Gunakan token admin (awalan admin_).' : e.message, true);
+    $('go').disabled = false;
+    return;
+  }
+  $('school').textContent = 'Admin - ' + cfg.nama_sekolah;
+  cfg.daftar_kelas.forEach((k) => { const o = document.createElement('option'); o.value = k; o.textContent = k; $('fk').appendChild(o); });
+  $('login').hidden = true;
+  render();
+}
+
+$('go').addEventListener('click', login);
+$('tok').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+$('out').addEventListener('click', () => { ss.set('admin_token', ''); location.reload(); });
+['q', 'fk', 'ff'].forEach((id) => $(id).addEventListener('input', render));
+$('cap').addEventListener('click', capture);
+$('cls').addEventListener('click', () => $('dlg').close());
+$('dlg').addEventListener('close', stopCam);
+$('nm').value = ss.get('admin_name') || '';
+</script>
+</body>
+</html>
