@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Presensi Wajah - Lab Komputer</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--tx:#f1f5f9;--mu:#a8b3c7;--ok:#22c55e;--warn:#f59e0b;--err:#f87171;--pri:#38bdf8}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel)}
+h1{font-size:1.15rem;margin:0}
+#clock{font-size:1.6rem;font-weight:700;font-variant-numeric:tabular-nums}
+#date{color:var(--mu);font-size:.9rem}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,input{font:inherit;color:inherit}
+button{min-height:48px;padding:0 20px;border-radius:10px;border:2px solid #475569;background:transparent;cursor:pointer;font-weight:600}
+button[aria-pressed=true]{background:var(--pri);border-color:var(--pri);color:#04202e}
+button:focus-visible,input:focus-visible{outline:3px solid var(--pri);outline-offset:2px}
+.chip{padding:6px 12px;border-radius:99px;background:#334155;font-size:.85rem}
+.chip.off{background:#7f1d1d}
+main{flex:1;min-height:0;display:grid;grid-template-columns:3fr 2fr;gap:16px;padding:16px 20px}
+.cam{position:relative;background:#000;border-radius:16px;overflow:hidden;min-height:260px}
+video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}
+#hint{position:absolute;left:12px;bottom:12px;padding:8px 14px;border-radius:99px;background:rgba(15,23,42,.85);font-weight:600}
+#res{background:var(--panel);border-radius:16px;border:4px solid #334155;padding:24px;display:flex;flex-direction:column;justify-content:center;text-align:center;gap:6px}
+#res.ok{border-color:var(--ok)}#res.warn{border-color:var(--warn)}#res.err{border-color:var(--err)}
+#ic{font-size:4rem;line-height:1}
+#t1{font-size:2rem;font-weight:800}
+#res.ok #t1,#res.ok #ic{color:var(--ok)}#res.warn #t1,#res.warn #ic{color:var(--warn)}#res.err #t1,#res.err #ic{color:var(--err)}
+#t2{font-size:1.8rem;font-weight:700;overflow-wrap:anywhere}
+#t3{color:var(--mu);font-size:1.05rem}
+.overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9}
+.box{background:var(--panel);border-radius:16px;padding:28px;width:100%;max-width:440px;display:flex;flex-direction:column;gap:10px}
+input{min-height:48px;padding:0 14px;border-radius:10px;border:2px solid #475569;background:var(--bg);width:100%}
+#go{background:var(--pri);border-color:var(--pri);color:#04202e}
+#go:disabled{opacity:.6;cursor:wait}
+#msg{min-height:1.5em;color:var(--mu);margin:0}
+#msg.e{color:var(--err)}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:no-preference){#res{transition:border-color .2s}}
+</style>
+</head>
+<body>
+<div id="start" class="overlay">
+  <div class="box">
+    <h1>Presensi Wajah - Lab Komputer</h1>
+    <label for="tok">Token scan (dari menu Presensi di Google Sheets)</label>
+    <input id="tok" type="password" autocomplete="off" spellcheck="false">
+    <button id="go">Mulai Presensi</button>
+    <p id="msg" role="alert"></p>
+  </div>
+</div>
+<header>
+  <div><h1 id="school">Presensi Wajah</h1><div id="date"></div></div>
+  <div id="clock" aria-label="Jam sekarang">--:--:--</div>
+  <div class="bar">
+    <button id="bIn" aria-pressed="true">Masuk</button>
+    <button id="bOut" aria-pressed="false">Pulang</button>
+    <span id="net" class="chip">Terhubung</span>
+    <button id="fs" aria-label="Layar penuh">&#x26F6;</button>
+  </div>
+</header>
+<main>
+  <section class="cam"><video id="v" autoplay muted playsinline></video><div id="hint">Menyiapkan kamera...</div></section>
+  <section id="res" class="idle" aria-live="polite">
+    <div id="ic" aria-hidden="true">&#x1F642;</div>
+    <div id="t1">Presensi Masuk</div>
+    <div id="t2">Hadapkan wajah ke kamera</div>
+    <div id="t3"></div>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+<script>
+'use strict';
+const API = 'https://script.google.com/macros/s/AKfycbxPgjuZoWTHpU4rEdswTsehppv_xOGKWqeWhWQjXU94gPQGyh1nvKjV6li3Lbw4Z92p/exec';
+const MODEL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
+const $ = (id) => document.getElementById(id);
+const ls = {
+  get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* penyimpanan dinonaktifkan */ } },
+};
+const ERR = {
+  SISWA_TIDAK_DITEMUKAN: 'Siswa tidak aktif', BELUM_MASUK: 'Belum presensi masuk',
+  TERLALU_CEPAT: 'Terlalu cepat', UNAUTHORIZED: 'Token ditolak', SERVER_SIBUK: 'Server sibuk',
+};
+let cfg, sesi = 'masuk', busy = false, ac, hideT, faceVer = 0, streak = { id: null, n: 0 }, unk = 0;
+const students = new Map(), faces = new Map(), lastSeen = new Map();
+let queue = [];
+try { queue = JSON.parse(ls.get('presensi_queue') || '[]'); } catch (e) { queue = []; }
+
+function setNet(ok) {
+  const n = $('net');
+  n.className = 'chip' + (ok ? '' : ' off');
+  n.textContent = (ok ? 'Terhubung' : 'Offline') + (queue.length ? ' - antrean ' + queue.length : '');
+}
+function saveQ() { ls.set('presensi_queue', JSON.stringify(queue)); setNet(!$('net').classList.contains('off')); }
+
+async function api(action, payload) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  const fail = (m, extra) => Object.assign(new Error(m), extra);
+  let res;
+  try {
+    res = await fetch(API, {
+      method: 'POST', redirect: 'follow', signal: ctl.signal,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, payload: payload || {}, token: ls.get('presensi_token'), pelaku: 'kiosk-lab' }),
+    });
+  } catch (e) {
+    setNet(false);
+    throw fail('Tidak dapat menghubungi server', { net: true });
+  } finally { clearTimeout(timer); }
+  let body;
+  try { body = await res.json(); } catch (e) {
+    setNet(false);
+    throw fail('Balasan server tidak valid. Periksa URL Web App dan akses "Anyone".', { net: true });
+  }
+  setNet(true);
+  if (!body.ok) throw fail(body.message || 'Kesalahan server', { code: body.error });
+  return body.data;
+}
+
+async function syncData() {
+  const list = await api('listStudents');
+  students.clear();
+  list.siswa.forEach((s) => students.set(s.id, s));
+  let since = faceVer;
+  for (;;) {
+    const d = await api('listFaceDelta', { sinceVersi: since, limit: 400 });
+    if (d.perlu_sinkron_ulang) { faces.clear(); since = 0; faceVer = 0; continue; }
+    d.items.forEach((i) => {
+      if (i.aktif && i.embedding) faces.set(i.id_sampel, { sid: i.id_siswa, vec: i.embedding });
+      else faces.delete(i.id_sampel);
+    });
+    since = d.versi_terakhir;
+    $('msg').textContent = 'Memuat data wajah... ' + faces.size + ' sampel';
+    if (!d.has_more) break;
+  }
+  faceVer = since;
+}
+
+function match(desc) {
+  let best = Infinity, sid = null;
+  for (const f of faces.values()) {
+    if (!students.has(f.sid)) continue;
+    let s = 0;
+    for (let i = 0; i < 128; i++) { const x = desc[i] - f.vec[i]; s += x * x; }
+    if (s < best) { best = s; sid = f.sid; }
+  }
+  return { sid, dist: Math.sqrt(best) };
+}
+
+function beep(freq, dur) {
+  try {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = freq; g.gain.value = 0.15;
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + dur);
+  } catch (e) { /* audio tidak tersedia */ }
+}
+
+function show(cls, icon, t1, t2, t3) {
+  $('res').className = cls;
+  $('ic').textContent = icon; $('t1').textContent = t1; $('t2').textContent = t2; $('t3').textContent = t3 || '';
+  clearTimeout(hideT);
+  if (cls !== 'idle') hideT = setTimeout(idle, 4500);
+}
+function idle() {
+  show('idle', '\u{1F642}', sesi === 'masuk' ? 'Presensi Masuk' : 'Presensi Pulang', 'Hadapkan wajah ke kamera', '');
+}
+function setMode(m) {
+  sesi = m;
+  $('bIn').setAttribute('aria-pressed', m === 'masuk');
+  $('bOut').setAttribute('aria-pressed', m === 'pulang');
+  idle();
+}
+
+async function record(sid, dist) {
+  const key = sid + sesi, now = Date.now();
+  if (now - (lastSeen.get(key) || 0) < (cfg.cooldown_detik || 0) * 1000) return;
+  lastSeen.set(key, now);
+  const s = students.get(sid), sub = s.kelas + ' \u2022 NISN ' + s.nisn;
+  const skor = Math.round(dist * 10000) / 10000;
+  busy = true;
+  try {
+    const r = await api('recordAttendance', { idSiswa: sid, sesi, skor });
+    const rec = r.record;
+    if (r.duplikat) {
+      const w = r.alasan === 'SUDAH_PULANG' ? 'pulang ' + rec.jam_pulang : r.alasan === 'SUDAH_MASUK' ? 'masuk ' + rec.jam_masuk : 'status ' + rec.status;
+      show('warn', '\u2139', 'Sudah tercatat', s.nama, sub + ' \u2022 ' + w); beep(660, 0.15);
+    } else if (sesi === 'masuk') {
+      const late = rec.status === 'TERLAMBAT';
+      show(late ? 'warn' : 'ok', late ? '\u26A0' : '\u2714', late ? 'Terlambat' : 'Hadir', s.nama, sub + ' \u2022 ' + rec.jam_masuk);
+      beep(late ? 520 : 880, 0.2);
+    } else {
+      show('ok', '\u2714', 'Pulang tercatat', s.nama, sub + ' \u2022 ' + rec.jam_pulang); beep(880, 0.2);
+    }
+  } catch (e) {
+    if (e.net) {
+      queue.push({ idSiswa: sid, sesi, skor, waktuKlien: now }); saveQ();
+      show('warn', '\u23F3', 'Disimpan sementara', s.nama, 'Akan dikirim saat koneksi pulih');
+    } else {
+      show('err', '\u2716', ERR[e.code] || 'Gagal', s.nama, e.message); beep(300, 0.35);
+    }
+  } finally { busy = false; }
+}
+
+async function flush() {
+  while (queue.length) {
+    try { await api('recordAttendance', queue[0]); } catch (e) { if (e.net) return; }
+    queue.shift(); saveQ();
+  }
+}
+
+async function loop() {
+  const v = $('v'), hint = $('hint');
+  if (!busy && v.readyState >= 2) {
+    try {
+      const d = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+        .withFaceLandmarks().withFaceDescriptor();
+      if (!d) { streak = { id: null, n: 0 }; unk = 0; hint.textContent = 'Mencari wajah...'; }
+      else if (d.detection.box.width < v.videoWidth * 0.2) { streak = { id: null, n: 0 }; hint.textContent = 'Dekatkan wajah ke kamera'; }
+      else {
+        const m = match(d.descriptor);
+        if (m.sid && m.dist <= cfg.ambang_kecocokan) {
+          unk = 0;
+          streak = streak.id === m.sid ? { id: m.sid, n: streak.n + 1 } : { id: m.sid, n: 1 };
+          hint.textContent = 'Wajah terdeteksi...';
+          if (streak.n >= 2) { streak = { id: null, n: 0 }; await record(m.sid, m.dist); }
+        } else {
+          streak = { id: null, n: 0 }; unk++; hint.textContent = 'Wajah tidak dikenali';
+          if (unk === 4) { show('err', '\u2716', 'Tidak dikenali', 'Hadap kamera lurus', 'Jika terus gagal, hubungi guru'); beep(300, 0.35); }
+        }
+      }
+    } catch (e) { console.error(e); }
+  }
+  setTimeout(loop, 300);
+}
+
+function tick() {
+  const d = new Date();
+  $('clock').textContent = d.toLocaleTimeString('id-ID', { hour12: false });
+  $('date').textContent = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function msg(text, isErr) { const m = $('msg'); m.textContent = text; m.className = isErr ? 'e' : ''; }
+
+async function start() {
+  const token = $('tok').value.trim() || ls.get('presensi_token');
+  if (!token) return msg('Masukkan token scan terlebih dahulu.', true);
+  ls.set('presensi_token', token);
+  $('go').disabled = true;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    msg('Menghubungi server...'); cfg = await api('getConfig');
+    if (cfg.dimensi_embedding && cfg.dimensi_embedding !== 128) throw new Error('Dimensi data wajah tidak cocok dengan model (harus 128).');
+    await syncData();
+    msg('Memuat model pengenal wajah...');
+    await Promise.all([faceapi.nets.tinyFaceDetector, faceapi.nets.faceLandmark68Net, faceapi.nets.faceRecognitionNet].map((n) => n.loadFromUri(MODEL)));
+    msg('Membuka kamera...');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    $('v').srcObject = stream;
+    await $('v').play();
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') ls.set('presensi_token', '');
+    msg(e.name === 'NotAllowedError' ? 'Izin kamera ditolak. Izinkan kamera di pengaturan situs lalu coba lagi.'
+      : e.name === 'NotFoundError' ? 'Kamera tidak ditemukan.' : e.message, true);
+    $('go').disabled = false;
+    return;
+  }
+  $('school').textContent = cfg.nama_sekolah;
+  $('start').hidden = true;
+  if (!faces.size) show('warn', '\u26A0', 'Belum ada data wajah', 'Daftarkan wajah siswa dulu', 'Lewat halaman admin');
+  else idle();
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); } catch (e) { /* opsional */ }
+  setNet(true); saveQ(); tick();
+  setInterval(tick, 1000);
+  setInterval(flush, 30000);
+  setInterval(() => syncData().catch(() => {}), 600000);
+  window.addEventListener('online', flush);
+  flush(); loop();
+}
+
+$('go').addEventListener('click', start);
+$('tok').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+$('bIn').addEventListener('click', () => setMode('masuk'));
+$('bOut').addEventListener('click', () => setMode('pulang'));
+$('fs').addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); });
+if (ls.get('presensi_token')) $('tok').placeholder = 'Token tersimpan. Klik Mulai atau isi token baru';
+</script>
+</body>
+</html>
