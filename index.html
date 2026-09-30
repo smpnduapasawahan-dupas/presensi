@@ -244,6 +244,10 @@ function tick() {
   $('date').textContent = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Waktu habis'), { name: 'Timeout' })), ms))]);
+}
+
 function msg(text, isErr) { const m = $('msg'); m.textContent = text; m.className = isErr ? 'e' : ''; }
 
 async function start() {
@@ -258,14 +262,25 @@ async function start() {
     await syncData();
     msg('Memuat model pengenal wajah...');
     await Promise.all([faceapi.nets.tinyFaceDetector, faceapi.nets.faceLandmark68Net, faceapi.nets.faceRecognitionNet].map((n) => n.loadFromUri(MODEL)));
-    msg('Membuka kamera...');
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    msg('Membuka kamera... Klik Izinkan jika Chrome bertanya.');
+    let stream;
+    try {
+      stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }), 20000);
+    } catch (e) {
+      if (e.name !== 'OverconstrainedError') throw e;
+      stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), 20000);
+    }
     $('v').srcObject = stream;
-    await $('v').play();
+    await withTimeout($('v').play(), 10000);
   } catch (e) {
     if (e.code === 'UNAUTHORIZED') ls.set('presensi_token', '');
-    msg(e.name === 'NotAllowedError' ? 'Izin kamera ditolak. Izinkan kamera di pengaturan situs lalu coba lagi.'
-      : e.name === 'NotFoundError' ? 'Kamera tidak ditemukan.' : e.message, true);
+    const camMsg = {
+      NotAllowedError: 'Izin kamera ditolak. Klik ikon kamera/gembok di kiri alamat, pilih Izinkan, lalu klik Mulai lagi.',
+      NotFoundError: 'Kamera tidak ditemukan. Periksa kabel/USB webcam.',
+      NotReadableError: 'Kamera sedang dipakai aplikasi atau tab lain. Tutup Zoom, Meet, Teams, atau tab kamera lain, lalu coba lagi.',
+      Timeout: 'Kamera tidak merespons. Cari jendela izin kamera di Chrome dan klik Izinkan, tutup aplikasi lain yang memakai kamera, lalu klik Mulai lagi.',
+    };
+    msg(camMsg[e.name] || e.message, true);
     $('go').disabled = false;
     return;
   }
