@@ -60,6 +60,7 @@ input{min-height:48px;padding:0 14px;border-radius:10px;border:2px solid #475569
     <button id="bIn" aria-pressed="true">Masuk</button>
     <button id="bOut" aria-pressed="false">Pulang</button>
     <span id="net" class="chip">Terhubung</span>
+    <button id="cam" hidden>&#x1F504; Depan</button>
     <button id="snd" aria-pressed="true" aria-label="Suara aktif">&#x1F50A;</button>
     <button id="fs" aria-label="Layar penuh">&#x26F6;</button>
   </div>
@@ -269,6 +270,31 @@ function tick() {
   $('date').textContent = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+let facing = ls.get('presensi_cam') === 'environment' ? 'environment' : 'user', stream = null;
+
+/** Buka kamera sesuai `facing` (user = depan, environment = belakang). Kamera depan dicerminkan. */
+async function openCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  const base = { width: { ideal: 640 }, height: { ideal: 480 } };
+  try {
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: { ideal: facing } }, base), audio: false }), 20000);
+  } catch (e) {
+    if (e.name !== 'OverconstrainedError') throw e;
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), 20000);
+  }
+  $('v').srcObject = stream;
+  await withTimeout($('v').play(), 10000);
+  $('v').style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    $('cam').hidden = devs.filter((d) => d.kind === 'videoinput').length < 2;
+  } catch (e) { $('cam').hidden = true; }
+}
+function paintCam() {
+  $('cam').textContent = '\u{1F504} ' + (facing === 'user' ? 'Depan' : 'Belakang');
+  $('cam').setAttribute('aria-label', 'Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif. Ketuk untuk mengganti.');
+}
+
 function withTimeout(promise, ms) {
   return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Waktu habis'), { name: 'Timeout' })), ms))]);
 }
@@ -288,15 +314,8 @@ async function start() {
     msg('Memuat model pengenal wajah...');
     await Promise.all([faceapi.nets.tinyFaceDetector, faceapi.nets.faceLandmark68Net, faceapi.nets.faceRecognitionNet].map((n) => n.loadFromUri(MODEL)));
     msg('Membuka kamera... Klik Izinkan jika Chrome bertanya.');
-    let stream;
-    try {
-      stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }), 20000);
-    } catch (e) {
-      if (e.name !== 'OverconstrainedError') throw e;
-      stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), 20000);
-    }
-    $('v').srcObject = stream;
-    await withTimeout($('v').play(), 10000);
+    await openCam();
+    paintCam();
   } catch (e) {
     if (e.code === 'UNAUTHORIZED') ls.set('presensi_token', '');
     const camMsg = {
@@ -333,6 +352,15 @@ $('snd').addEventListener('click', () => {
   if (mute && canSpeak) speechSynthesis.cancel();
   paintSnd();
   if (!mute) announce('Suara aktif', 880, 0.1);
+});
+$('cam').addEventListener('click', async () => {
+  const prev = facing;
+  facing = facing === 'user' ? 'environment' : 'user';
+  busy = true; streak = { id: null, n: 0 };
+  $('hint').textContent = 'Mengganti kamera...';
+  try { await openCam(); ls.set('presensi_cam', facing); }
+  catch (e) { facing = prev; try { await openCam(); } catch (e2) { /* tetap di kamera sebelumnya */ } }
+  finally { busy = false; paintCam(); }
 });
 paintSnd();
 $('go').addEventListener('click', start);
