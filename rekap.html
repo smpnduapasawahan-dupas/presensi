@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rekap Presensi</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--tx:#f1f5f9;--mu:#a8b3c7;--ok:#22c55e;--err:#f87171;--pri:#38bdf8}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel)}
+h1{font-size:1.15rem;margin:0}
+nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+a{color:var(--pri)}
+button,input,select{font:inherit;color:inherit}
+button{min-height:44px;padding:0 16px;border-radius:10px;border:2px solid #475569;background:transparent;cursor:pointer;font-weight:600}
+button.p{background:var(--pri);border-color:var(--pri);color:#04202e}
+button:disabled{opacity:.55;cursor:wait}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--pri);outline-offset:2px}
+input,select{min-height:44px;padding:0 12px;border-radius:10px;border:2px solid #475569;background:var(--bg);color-scheme:dark}
+.tools{display:flex;flex-wrap:wrap;gap:10px;padding:16px 20px;align-items:center}
+.tools input[type=search]{flex:1;min-width:180px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:0 20px 12px}
+.chip{background:#334155;padding:6px 14px;border-radius:99px;font-weight:600}
+.tw{padding:0 20px 60px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:720px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #334155}
+th{color:var(--mu);font-size:.85rem;font-weight:600}
+.b{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.85rem;font-weight:700}
+.HADIR{background:#14532d;color:#bbf7d0}.TERLAMBAT{background:#78350f;color:#fde68a}
+.IZIN,.SAKIT{background:#1e3a8a;color:#bfdbfe}.ALPA{background:#7f1d1d;color:#fecaca}.BELUM{background:#334155;color:#cbd5e1}
+.overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9}
+.box{background:var(--panel);border-radius:16px;padding:28px;width:100%;max-width:440px;display:flex;flex-direction:column;gap:10px}
+.m{min-height:1.5em;margin:0;color:var(--mu)}
+.e{color:var(--err)!important}
+dialog{background:var(--panel);color:var(--tx);border:0;border-radius:16px;padding:20px;width:min(520px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.7)}
+dialog label{display:block;margin-top:10px;font-weight:600}
+dialog input,dialog select{width:100%}
+small{color:var(--mu);font-weight:400}
+.row{display:flex;gap:10px;margin-top:14px}
+.row button{flex:1}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ok);color:#04220f;padding:10px 20px;border-radius:99px;font-weight:700}
+.ph,.sig{display:none}
+@media print{
+  body{background:#fff;color:#000;font-size:11pt}
+  .np{display:none!important}
+  .ph{display:block;text-align:center;margin-bottom:10px}
+  .ph h2{margin:0}
+  .tw{padding:0;overflow:visible}
+  table{min-width:0}
+  th,td{border:1px solid #000;color:#000;padding:4px 6px}
+  .b{background:none!important;color:#000!important}
+  .sig{display:flex;justify-content:space-between;margin-top:40px;padding:0 30px}
+  .sig div{text-align:center;width:40%}
+}
+</style>
+</head>
+<body>
+<div id="login" class="overlay np">
+  <div class="box">
+    <h1>Rekap Presensi</h1>
+    <label for="tok">Token admin</label>
+    <input id="tok" type="password" autocomplete="off" spellcheck="false">
+    <label for="nm">Nama Anda (untuk catatan audit)</label>
+    <input id="nm" type="text" autocomplete="off" maxlength="40">
+    <button id="go" class="p">Masuk</button>
+    <p id="lm" class="m" role="alert"></p>
+  </div>
+</div>
+<header class="np">
+  <div><h1 id="school">Rekap Presensi</h1></div>
+  <nav><a href="admin.html">Pendaftaran wajah</a><button id="bSet">Pengaturan</button><button id="out">Keluar</button></nav>
+</header>
+<div class="tools np">
+  <label>Tanggal <input id="dt" type="date"></label>
+  <input id="q" type="search" placeholder="Cari nama atau NISN" aria-label="Cari siswa">
+  <select id="fk" aria-label="Filter kelas"><option value="">Semua kelas</option></select>
+  <select id="fs" aria-label="Filter status"><option value="">Semua status</option></select>
+  <button id="bCsv">Ekspor CSV</button>
+  <button id="bPrint" class="p">Cetak</button>
+</div>
+<div id="chips" class="chips np" aria-live="polite"></div>
+<div class="tw">
+  <div class="ph"><h2 id="phS"></h2><div>REKAP PRESENSI SISWA</div><div id="phD"></div><div id="phC"></div></div>
+  <table>
+    <thead><tr><th>No</th><th>Nama</th><th>Kelas</th><th>Masuk</th><th>Pulang</th><th>Status</th><th class="np">Aksi</th></tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+  <div class="sig"><div>Wali Kelas<br><br><br><br>(______________)</div><div>Petugas<br><br><br><br>(______________)</div></div>
+</div>
+<div id="toast" class="np" role="status" aria-live="polite" hidden></div>
+
+<dialog id="dk" aria-labelledby="dkT">
+  <h2 id="dkT" style="margin:0;font-size:1.1rem"></h2>
+  <label for="kS">Status</label><select id="kS"></select>
+  <label for="kM">Jam masuk <small>(boleh kosong untuk Izin/Sakit/Alpa)</small></label><input id="kM" type="time" step="1">
+  <label for="kP">Jam pulang <small>(opsional)</small></label><input id="kP" type="time" step="1">
+  <label for="kA">Alasan koreksi <small>(wajib, tercatat di audit)</small></label><input id="kA" type="text" maxlength="200">
+  <p id="kE" class="m" role="alert"></p>
+  <div class="row"><button id="kC">Batal</button><button id="kOk" class="p">Simpan</button></div>
+</dialog>
+
+<dialog id="ds" aria-labelledby="dsT">
+  <h2 id="dsT" style="margin:0;font-size:1.1rem">Pengaturan</h2>
+  <div id="sf"></div>
+  <p id="sE" class="m" role="alert"></p>
+  <div class="row"><button id="sC">Batal</button><button id="sOk" class="p">Simpan</button></div>
+</dialog>
+
+<script>
+'use strict';
+const API = 'https://script.google.com/macros/s/AKfycbxPgjuZoWTHpU4rEdswTsehppv_xOGKWqeWhWQjXU94gPQGyh1nvKjV6li3Lbw4Z92p/exec';
+const $ = (id) => document.getElementById(id);
+const STAT = ['HADIR', 'TERLAMBAT', 'IZIN', 'SAKIT', 'ALPA'];
+const FIELDS = [
+  ['nama_sekolah', 'Nama sekolah', ''],
+  ['jam_toleransi', 'Batas jam terlambat', 'Format HH:mm. Masuk setelah jam ini = Terlambat'],
+  ['jeda_minimal_pulang_menit', 'Jeda minimal pulang (menit)', '0 = nonaktif'],
+  ['cooldown_detik', 'Jeda scan ulang di kiosk (detik)', ''],
+  ['ambang_kecocokan', 'Ambang kecocokan wajah', 'Makin kecil makin ketat (bawaan 0.5)'],
+  ['daftar_kelas', 'Daftar kelas', 'Pisahkan dengan koma, contoh 7A,7B,8A'],
+];
+const ss = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) { /* diabaikan */ } },
+};
+const students = new Map();
+let cfg, rows = [], sum = null, view = [], curRow = null;
+
+async function api(action, payload, retried) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 30000);
+  const fail = (m, extra) => Object.assign(new Error(m), extra);
+  let res;
+  try {
+    res = await fetch(API, {
+      method: 'POST', redirect: 'follow', signal: ctl.signal,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, payload: payload || {}, token: ss.get('admin_token'), pelaku: ss.get('admin_name') || 'admin' }),
+    });
+  } catch (e) {
+    if (!retried && /^(get|list)/.test(action)) return api(action, payload, true);
+    throw fail('Tidak dapat menghubungi server. Periksa internet lalu coba lagi.', { net: true });
+  } finally { clearTimeout(timer); }
+  let body;
+  try { body = await res.json(); } catch (e) { throw fail('Balasan server tidak valid.', { net: true }); }
+  if (!body.ok) throw fail(body.message || 'Kesalahan server', { code: body.error });
+  return body.data;
+}
+
+function toast(t) {
+  const n = $('toast'); n.textContent = t; n.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { n.hidden = true; }, 5000);
+}
+function msg(id, t, err) { const m = $(id); m.textContent = t; m.className = 'm' + (err ? ' e' : ''); }
+function el(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
+
+function today() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); }
+function longDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+async function load() {
+  const d = $('dt').value;
+  if (!d) return;
+  $('tb').textContent = '';
+  const tr = el('tr'); const td = el('td', 'Memuat...'); td.colSpan = 7; tr.appendChild(td); $('tb').appendChild(tr);
+  try {
+    const r = await api('getAttendanceByDate', { tanggal: d });
+    const byId = new Map(r.records.map((x) => [x.id_siswa, x]));
+    rows = [...students.values()].map((s) => ({ s, x: byId.get(s.id) || null }));
+    rows.sort((a, b) => a.s.kelas.localeCompare(b.s.kelas) || a.s.nama.localeCompare(b.s.nama));
+    sum = r.ringkasan;
+    render();
+  } catch (e) { $('tb').textContent = ''; const t2 = el('tr'); const c = el('td', 'Gagal memuat: ' + e.message); c.colSpan = 7; t2.appendChild(c); $('tb').appendChild(t2); }
+}
+
+function statusOf(r) { return r.x ? r.x.status : 'BELUM'; }
+
+function render() {
+  const q = $('q').value.trim().toLowerCase(), k = $('fk').value, f = $('fs').value;
+  view = rows.filter((r) => (!q || r.s.nama.toLowerCase().includes(q) || r.s.nisn.includes(q)) && (!k || r.s.kelas === k) && (!f || statusOf(r) === f));
+  const c = $('chips'); c.textContent = '';
+  [['Hadir', sum.hadir], ['Terlambat', sum.terlambat], ['Izin', sum.izin], ['Sakit', sum.sakit], ['Alpa', sum.alpa], ['Belum presensi', sum.belum], ['Total aktif', sum.total_aktif]]
+    .forEach(([l, n]) => c.appendChild(el('span', l + ': ' + n, 'chip')));
+  const tb = $('tb'); tb.textContent = '';
+  view.forEach((r, i) => {
+    const tr = el('tr');
+    tr.appendChild(el('td', String(i + 1)));
+    tr.appendChild(el('td', r.s.nama));
+    tr.appendChild(el('td', r.s.kelas));
+    tr.appendChild(el('td', r.x && r.x.jam_masuk ? r.x.jam_masuk : '-'));
+    tr.appendChild(el('td', r.x && r.x.jam_pulang ? r.x.jam_pulang : '-'));
+    const st = el('td'); const st0 = statusOf(r);
+    st.appendChild(el('span', st0 === 'BELUM' ? 'Belum' : st0, 'b ' + st0));
+    tr.appendChild(st);
+    const a = el('td', undefined, 'np');
+    const b = el('button', 'Koreksi'); b.addEventListener('click', () => openFix(r)); a.appendChild(b);
+    tr.appendChild(a);
+    tb.appendChild(tr);
+  });
+  if (!view.length) { const tr = el('tr'); const td = el('td', students.size ? 'Tidak ada data yang cocok.' : 'Belum ada siswa.'); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr); }
+  $('phS').textContent = cfg.nama_sekolah;
+  $('phD').textContent = longDate($('dt').value);
+  $('phC').textContent = (k ? 'Kelas ' + k : 'Semua kelas') + (f ? ' \u2022 Status: ' + f : '');
+}
+
+function openFix(r) {
+  curRow = r;
+  $('dkT').textContent = 'Koreksi: ' + r.s.nama + ' (' + r.s.kelas + ')';
+  $('kS').value = r.x ? r.x.status : 'HADIR';
+  $('kM').value = r.x && r.x.jam_masuk ? r.x.jam_masuk : '';
+  $('kP').value = r.x && r.x.jam_pulang ? r.x.jam_pulang : '';
+  $('kA').value = '';
+  msg('kE', '');
+  $('dk').showModal();
+}
+
+async function saveFix() {
+  $('kOk').disabled = true;
+  try {
+    await api('overrideAttendance', {
+      tanggal: $('dt').value, idSiswa: curRow.s.id, status: $('kS').value,
+      jamMasuk: $('kM').value || null, jamPulang: $('kP').value || null, alasan: $('kA').value,
+    });
+    $('dk').close();
+    toast('Koreksi ' + curRow.s.nama + ' tersimpan');
+    await load();
+  } catch (e) { msg('kE', e.message, true); }
+  finally { $('kOk').disabled = false; }
+}
+
+function csvCell(v) {
+  let t = String(v === null || v === undefined ? '' : v);
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+  return '"' + t.replace(/"/g, '""') + '"';
+}
+function exportCsv() {
+  const head = ['No', 'Tanggal', 'NISN', 'Nama', 'Kelas', 'Jam Masuk', 'Jam Pulang', 'Status', 'Sumber', 'Alasan koreksi'];
+  const lines = [head.map(csvCell).join(',')];
+  view.forEach((r, i) => {
+    const x = r.x;
+    lines.push([i + 1, $('dt').value].map(csvCell).concat(['="' + r.s.nisn + '"'],
+      [r.s.nama, r.s.kelas, x && x.jam_masuk, x && x.jam_pulang, statusOf(r), x && x.sumber, x && x.alasan].map(csvCell)).join(','));
+  });
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'presensi-' + $('dt').value + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function openSet() {
+  msg('sE', 'Memuat...');
+  $('ds').showModal();
+  try {
+    const s = (await api('getSettings')).pengaturan;
+    const box = $('sf'); box.textContent = '';
+    FIELDS.forEach(([key, label, hint]) => {
+      const l = el('label', label + ' '); l.htmlFor = 'f_' + key;
+      if (hint) l.appendChild(el('small', '(' + hint + ')'));
+      const i = el('input'); i.id = 'f_' + key; i.value = s[key]; i.dataset.key = key; i.type = 'text';
+      box.appendChild(l); box.appendChild(i);
+    });
+    msg('sE', '');
+  } catch (e) { msg('sE', e.message, true); }
+}
+async function saveSet() {
+  const nilai = {};
+  $('sf').querySelectorAll('input').forEach((i) => { nilai[i.dataset.key] = i.value; });
+  $('sOk').disabled = true;
+  try {
+    const r = await api('updateSettings', { nilai });
+    cfg.nama_sekolah = r.pengaturan.nama_sekolah;
+    $('school').textContent = 'Rekap - ' + cfg.nama_sekolah;
+    $('ds').close(); toast('Pengaturan tersimpan');
+    if (rows.length) render();
+  } catch (e) { msg('sE', e.message, true); }
+  finally { $('sOk').disabled = false; }
+}
+
+async function login() {
+  const token = $('tok').value.trim() || ss.get('admin_token');
+  if (!token) return msg('lm', 'Masukkan token admin.', true);
+  ss.set('admin_token', token);
+  ss.set('admin_name', $('nm').value.trim() || ss.get('admin_name') || 'admin');
+  $('go').disabled = true;
+  try {
+    msg('lm', 'Memeriksa token...');
+    await api('getSettings');
+    cfg = await api('getConfig');
+    const list = await api('listStudents');
+    students.clear(); list.siswa.forEach((s) => students.set(s.id, s));
+  } catch (e) {
+    ss.set('admin_token', '');
+    msg('lm', e.code === 'FORBIDDEN' ? 'Ini token scan. Gunakan token admin.' : e.message, true);
+    $('go').disabled = false;
+    return;
+  }
+  $('school').textContent = 'Rekap - ' + cfg.nama_sekolah;
+  cfg.daftar_kelas.forEach((k) => { const o = el('option', k); o.value = k; $('fk').appendChild(o); });
+  ['BELUM'].concat(STAT).forEach((s) => { const o = el('option', s === 'BELUM' ? 'Belum presensi' : s); o.value = s; $('fs').appendChild(o); });
+  $('login').hidden = true;
+  load();
+}
+
+STAT.forEach((s) => { const o = el('option', s); o.value = s; $('kS').appendChild(o); });
+$('dt').value = today();
+$('nm').value = ss.get('admin_name') || '';
+$('go').addEventListener('click', login);
+$('tok').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+$('out').addEventListener('click', () => { ss.set('admin_token', ''); location.reload(); });
+$('dt').addEventListener('change', load);
+['q', 'fk', 'fs'].forEach((id) => $(id).addEventListener('input', () => { if (rows.length) render(); }));
+$('bCsv').addEventListener('click', exportCsv);
+$('bPrint').addEventListener('click', () => window.print());
+$('bSet').addEventListener('click', openSet);
+$('kC').addEventListener('click', () => $('dk').close());
+$('kOk').addEventListener('click', saveFix);
+$('sC').addEventListener('click', () => $('ds').close());
+$('sOk').addEventListener('click', saveSet);
+if (ss.get('admin_token')) login();
+</script>
+</body>
+</html>
