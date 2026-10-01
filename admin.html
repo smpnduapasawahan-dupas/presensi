@@ -85,6 +85,7 @@ video{width:100%;border-radius:12px;background:#000;transform:scaleX(-1);display
 const API = 'https://script.google.com/macros/s/AKfycbxPgjuZoWTHpU4rEdswTsehppv_xOGKWqeWhWQjXU94gPQGyh1nvKjV6li3Lbw4Z92p/exec';
 const MODEL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
 const SAMPLES = 3;
+const DUP_HARD = 0.4;   // di bawah ini hampir pasti orang yang sama: ditolak tanpa opsi
 const GUIDE = ['Wajah lurus ke kamera', 'Menoleh sedikit ke kiri', 'Menoleh sedikit ke kanan'];
 const $ = (id) => document.getElementById(id);
 const ss = {
@@ -302,12 +303,19 @@ async function capture() {
 
 async function save() {
   updCap();
+  let worst = null;
   for (const vec of caps) {
     const m = match(vec, cur.id);
-    if (m.sid && m.dist <= cfg.ambang_kecocokan) {
-      const o = students.get(m.sid);
+    if (m.sid && (!worst || m.dist < worst.dist)) worst = m;
+  }
+  if (worst && worst.dist <= cfg.ambang_kecocokan) {
+    const o = students.get(worst.sid);
+    const info = o.nama + ' (' + o.kelas + '), jarak ' + worst.dist.toFixed(2) + ' dari batas ' + Number(cfg.ambang_kecocokan).toFixed(2);
+    const hard = worst.dist < DUP_HARD;
+    if (hard || !confirm('Wajah mirip dengan ' + info + '.\n\nIni bisa membuat dua siswa tertukar saat scan. Tetap simpan?')) {
       caps = []; updCap();
-      return dmsg('Wajah ini mirip dengan ' + o.nama + ' (' + o.kelas + '). Pastikan siswanya benar, lalu ulangi.', true);
+      return dmsg('Wajah mirip dengan ' + info + '. ' + (hard
+        ? 'Hampir pasti orang yang sama. Pastikan siswanya benar, lalu ulangi.' : 'Pendaftaran dibatalkan.'), true);
     }
   }
   dmsg('Menyimpan ke server...');
