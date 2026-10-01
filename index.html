@@ -77,6 +77,7 @@ input{min-height:48px;padding:0 14px;border-radius:10px;border:2px solid #475569
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
 <script>
 'use strict';
+const MIN_GAP = 0.05;   // selisih minimal ke siswa terdekat kedua, agar tidak tertukar
 const API = 'https://script.google.com/macros/s/AKfycbxPgjuZoWTHpU4rEdswTsehppv_xOGKWqeWhWQjXU94gPQGyh1nvKjV6li3Lbw4Z92p/exec';
 const MODEL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
 const $ = (id) => document.getElementById(id);
@@ -146,15 +147,21 @@ async function syncData() {
   faceVer = since;
 }
 
+/** Cari siswa terdekat. `gap` = selisih jarak ke siswa terdekat kedua; kecil berarti ambigu. */
 function match(desc) {
-  let best = Infinity, sid = null;
+  const per = new Map();
   for (const f of faces.values()) {
     if (!students.has(f.sid)) continue;
     let s = 0;
     for (let i = 0; i < 128; i++) { const x = desc[i] - f.vec[i]; s += x * x; }
-    if (s < best) { best = s; sid = f.sid; }
+    const prev = per.get(f.sid);
+    if (prev === undefined || s < prev) per.set(f.sid, s);
   }
-  return { sid, dist: Math.sqrt(best) };
+  let best = Infinity, second = Infinity, sid = null;
+  per.forEach((s, id) => {
+    if (s < best) { second = best; best = s; sid = id; } else if (s < second) { second = s; }
+  });
+  return { sid, dist: Math.sqrt(best), gap: Math.sqrt(second) - Math.sqrt(best) };
 }
 
 let mute = ls.get('presensi_mute') === '1', voice = null;
@@ -249,13 +256,13 @@ async function loop() {
       else if (d.detection.box.width < v.videoWidth * 0.2) { streak = { id: null, n: 0 }; hint.textContent = 'Dekatkan wajah ke kamera'; }
       else {
         const m = match(d.descriptor);
-        if (m.sid && m.dist <= cfg.ambang_kecocokan) {
+        if (m.sid && m.dist <= cfg.ambang_kecocokan && m.gap >= MIN_GAP) {
           unk = 0;
           streak = streak.id === m.sid ? { id: m.sid, n: streak.n + 1 } : { id: m.sid, n: 1 };
           hint.textContent = 'Wajah terdeteksi...';
           if (streak.n >= 2) { streak = { id: null, n: 0 }; await record(m.sid, m.dist); }
         } else {
-          streak = { id: null, n: 0 }; unk++; hint.textContent = 'Wajah tidak dikenali';
+          streak = { id: null, n: 0 }; unk++; hint.textContent = m.sid && m.dist <= cfg.ambang_kecocokan ? 'Wajah mirip beberapa siswa, coba lagi' : 'Wajah tidak dikenali';
           if (unk === 4) { show('err', '\u2716', 'Tidak dikenali', 'Hadap kamera lurus', 'Jika terus gagal, hubungi guru'); beep(300, 0.35); }
         }
       }
@@ -270,26 +277,59 @@ function tick() {
   $('date').textContent = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-let facing = ls.get('presensi_cam') === 'environment' ? 'environment' : 'user', stream = null;
+let facing = ls.get('presensi_cam') === 'environment' ? 'environment' : 'user', stream = null, curDev = null;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-/** Buka kamera sesuai `facing` (user = depan, environment = belakang). Kamera depan dicerminkan. */
-async function openCam() {
+/**
+ * Buka kamera. facing: user = depan, environment = belakang (depan dicerminkan).
+ * o.exact: wajib persis sesuai facing. o.deviceId: pilih kamera tertentu.
+ * Tombol ganti kamera selalu tampil di HP, karena sebagian HP melaporkan jumlah kamera dengan tidak biasa.
+ */
+async function openCam(o) {
+  o = o || {};
   if (stream) stream.getTracks().forEach((t) => t.stop());
   const base = { width: { ideal: 640 }, height: { ideal: 480 } };
+  const video = o.deviceId
+    ? Object.assign({ deviceId: { exact: o.deviceId } }, base)
+    : Object.assign({ facingMode: o.exact ? { exact: facing } : { ideal: facing } }, base);
   try {
-    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: { ideal: facing } }, base), audio: false }), 20000);
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video, audio: false }), 20000);
   } catch (e) {
-    if (e.name !== 'OverconstrainedError') throw e;
+    if (e.name !== 'OverconstrainedError' || o.exact || o.deviceId) throw e;
     stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), 20000);
   }
+  const track = stream.getVideoTracks()[0];
+  const st = track.getSettings();
+  curDev = st.deviceId || null;
+  if (o.deviceId) facing = (st.facingMode === 'environment' || /back|rear|belakang/i.test(track.label)) ? 'environment' : 'user';
   $('v').srcObject = stream;
   await withTimeout($('v').play(), 10000);
   $('v').style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
-    $('cam').hidden = devs.filter((d) => d.kind === 'videoinput').length < 2;
-  } catch (e) { $('cam').hidden = true; }
+    $('cam').hidden = !(isMobile || devs.filter((d) => d.kind === 'videoinput').length >= 2);
+  } catch (e) { $('cam').hidden = !isMobile; }
 }
+
+/** Ganti kamera: coba facingMode persis, bila gagal pakai kamera berikutnya dari daftar perangkat. */
+async function switchCam() {
+  const prev = facing;
+  facing = facing === 'user' ? 'environment' : 'user';
+  try {
+    try { await openCam({ exact: true }); }
+    catch (e) {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      if (devs.length < 2) throw new Error('HP ini hanya melaporkan satu kamera ke Chrome.');
+      const i = devs.findIndex((d) => d.deviceId === curDev);
+      await openCam({ deviceId: devs[(i + 1) % devs.length].deviceId });
+    }
+  } catch (e) {
+    facing = prev;
+    try { await openCam(); } catch (e2) { /* tetap di kamera sebelumnya */ }
+    throw e;
+  }
+}
+
 function paintCam() {
   $('cam').textContent = '\u{1F504} ' + (facing === 'user' ? 'Depan' : 'Belakang');
   $('cam').setAttribute('aria-label', 'Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif. Ketuk untuk mengganti.');
@@ -354,12 +394,10 @@ $('snd').addEventListener('click', () => {
   if (!mute) announce('Suara aktif', 880, 0.1);
 });
 $('cam').addEventListener('click', async () => {
-  const prev = facing;
-  facing = facing === 'user' ? 'environment' : 'user';
   busy = true; streak = { id: null, n: 0 };
   $('hint').textContent = 'Mengganti kamera...';
-  try { await openCam(); ls.set('presensi_cam', facing); }
-  catch (e) { facing = prev; try { await openCam(); } catch (e2) { /* tetap di kamera sebelumnya */ } }
+  try { await switchCam(); ls.set('presensi_cam', facing); }
+  catch (e) { show('warn', '\u2139', 'Kamera tidak diganti', e.message, ''); }
   finally { busy = false; paintCam(); }
 });
 paintSnd();
