@@ -60,6 +60,7 @@ input{min-height:48px;padding:0 14px;border-radius:10px;border:2px solid #475569
     <button id="bIn" aria-pressed="true">Masuk</button>
     <button id="bOut" aria-pressed="false">Pulang</button>
     <span id="net" class="chip">Terhubung</span>
+    <button id="snd" aria-pressed="true" aria-label="Suara aktif">&#x1F50A;</button>
     <button id="fs" aria-label="Layar penuh">&#x26F6;</button>
   </div>
 </header>
@@ -155,7 +156,28 @@ function match(desc) {
   return { sid, dist: Math.sqrt(best) };
 }
 
+let mute = ls.get('presensi_mute') === '1', voice = null;
+const canSpeak = 'speechSynthesis' in window;
+function pickVoice() {
+  voice = speechSynthesis.getVoices().find((v) => /^id([-_]|$)/i.test(v.lang)) || null;
+}
+if (canSpeak) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+
+/** Ucapkan teks (nama siswa + status). Jika suara tidak tersedia, jatuh ke bunyi bip. */
+function announce(text, freq, dur) {
+  if (mute) return;
+  if (!canSpeak) return beep(freq, dur);
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.toLowerCase());
+    u.lang = 'id-ID'; u.rate = 0.95;
+    if (voice) u.voice = voice;
+    speechSynthesis.speak(u);
+  } catch (e) { beep(freq, dur); }
+}
+
 function beep(freq, dur) {
+  if (mute) return;
   try {
     const o = ac.createOscillator(), g = ac.createGain();
     o.frequency.value = freq; g.gain.value = 0.15;
@@ -191,20 +213,20 @@ async function record(sid, dist) {
     const rec = r.record;
     if (r.duplikat) {
       const w = r.alasan === 'SUDAH_PULANG' ? 'pulang ' + rec.jam_pulang : r.alasan === 'SUDAH_MASUK' ? 'masuk ' + rec.jam_masuk : 'status ' + rec.status;
-      show('warn', '\u2139', 'Sudah tercatat', s.nama, sub + ' \u2022 ' + w); beep(660, 0.15);
+      show('warn', '\u2139', 'Sudah tercatat', s.nama, sub + ' \u2022 ' + w); announce(s.nama + ', sudah tercatat.', 660, 0.15);
     } else if (sesi === 'masuk') {
       const late = rec.status === 'TERLAMBAT';
       show(late ? 'warn' : 'ok', late ? '\u26A0' : '\u2714', late ? 'Terlambat' : 'Hadir', s.nama, sub + ' \u2022 ' + rec.jam_masuk);
-      beep(late ? 520 : 880, 0.2);
+      announce(s.nama + (late ? ', terlambat.' : ', hadir.'), late ? 520 : 880, 0.2);
     } else {
-      show('ok', '\u2714', 'Pulang tercatat', s.nama, sub + ' \u2022 ' + rec.jam_pulang); beep(880, 0.2);
+      show('ok', '\u2714', 'Pulang tercatat', s.nama, sub + ' \u2022 ' + rec.jam_pulang); announce(s.nama + ', pulang tercatat. Hati-hati di jalan.', 880, 0.2);
     }
   } catch (e) {
     if (e.net) {
       queue.push({ idSiswa: sid, sesi, skor, waktuKlien: now }); saveQ();
-      show('warn', '\u23F3', 'Disimpan sementara', s.nama, 'Akan dikirim saat koneksi pulih');
+      show('warn', '\u23F3', 'Disimpan sementara', s.nama, 'Akan dikirim saat koneksi pulih'); announce(s.nama + ', disimpan sementara.', 520, 0.2);
     } else {
-      show('err', '\u2716', ERR[e.code] || 'Gagal', s.nama, e.message); beep(300, 0.35);
+      show('err', '\u2716', ERR[e.code] || 'Gagal', s.nama, e.message); announce(s.nama + ', ' + (ERR[e.code] || 'gagal') + '.', 300, 0.35);
     }
   } finally { busy = false; }
 }
@@ -300,6 +322,19 @@ async function start() {
   flush(); loop();
 }
 
+function paintSnd() {
+  const b = $('snd');
+  b.textContent = mute ? '\u{1F507}' : '\u{1F50A}';
+  b.setAttribute('aria-pressed', String(!mute));
+  b.setAttribute('aria-label', mute ? 'Suara mati' : 'Suara aktif');
+}
+$('snd').addEventListener('click', () => {
+  mute = !mute; ls.set('presensi_mute', mute ? '1' : '0');
+  if (mute && canSpeak) speechSynthesis.cancel();
+  paintSnd();
+  if (!mute) announce('Suara aktif', 880, 0.1);
+});
+paintSnd();
 $('go').addEventListener('click', start);
 $('tok').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
 $('bIn').addEventListener('click', () => setMode('masuk'));
