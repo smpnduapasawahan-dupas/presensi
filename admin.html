@@ -212,24 +212,59 @@ function ensureModels() {
 function updCap() {
   $('gd').textContent = caps.length < SAMPLES ? 'Sampel ' + (caps.length + 1) + ' dari ' + SAMPLES + ': ' + GUIDE[caps.length] : 'Menyimpan...';
 }
-let facing = 'user';
-async function openCam() {
-  stopCam();
+let facing = 'user', curDev = null;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+/**
+ * Buka kamera. facing: user = depan, environment = belakang (depan dicerminkan).
+ * o.exact: wajib persis sesuai facing. o.deviceId: pilih kamera tertentu.
+ * Tombol ganti kamera selalu tampil di HP, karena sebagian HP melaporkan jumlah kamera dengan tidak biasa.
+ */
+async function openCam(o) {
+  o = o || {};
+  if (stream) stream.getTracks().forEach((t) => t.stop());
   const base = { width: { ideal: 640 }, height: { ideal: 480 } };
+  const video = o.deviceId
+    ? Object.assign({ deviceId: { exact: o.deviceId } }, base)
+    : Object.assign({ facingMode: o.exact ? { exact: facing } : { ideal: facing } }, base);
   try {
-    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: { ideal: facing } }, base), audio: false }), 20000);
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video, audio: false }), 20000);
   } catch (e) {
-    if (e.name !== 'OverconstrainedError') throw e;
+    if (e.name !== 'OverconstrainedError' || o.exact || o.deviceId) throw e;
     stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), 20000);
   }
+  const track = stream.getVideoTracks()[0];
+  const st = track.getSettings();
+  curDev = st.deviceId || null;
+  if (o.deviceId) facing = (st.facingMode === 'environment' || /back|rear|belakang/i.test(track.label)) ? 'environment' : 'user';
   $('v').srcObject = stream;
   await withTimeout($('v').play(), 10000);
   $('v').style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
-    $('sw').hidden = devs.filter((d) => d.kind === 'videoinput').length < 2;
-  } catch (e) { $('sw').hidden = true; }
+    $('sw').hidden = !(isMobile || devs.filter((d) => d.kind === 'videoinput').length >= 2);
+  } catch (e) { $('sw').hidden = !isMobile; }
 }
+
+/** Ganti kamera: coba facingMode persis, bila gagal pakai kamera berikutnya dari daftar perangkat. */
+async function switchCam() {
+  const prev = facing;
+  facing = facing === 'user' ? 'environment' : 'user';
+  try {
+    try { await openCam({ exact: true }); }
+    catch (e) {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      if (devs.length < 2) throw new Error('HP ini hanya melaporkan satu kamera ke Chrome.');
+      const i = devs.findIndex((d) => d.deviceId === curDev);
+      await openCam({ deviceId: devs[(i + 1) % devs.length].deviceId });
+    }
+  } catch (e) {
+    facing = prev;
+    try { await openCam(); } catch (e2) { /* tetap di kamera sebelumnya */ }
+    throw e;
+  }
+}
+
 function stopCam() { if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
 
 async function openReg(s) {
@@ -327,12 +362,10 @@ $('tok').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); })
 $('out').addEventListener('click', () => { ss.set('admin_token', ''); location.reload(); });
 ['q', 'fk', 'ff'].forEach((id) => $(id).addEventListener('input', render));
 $('sw').addEventListener('click', async () => {
-  const prev = facing;
-  facing = facing === 'user' ? 'environment' : 'user';
   caps = []; updCap();   // semua sampel harus dari kamera yang sama
   $('cap').disabled = true; dmsg('Mengganti kamera...');
-  try { await openCam(); dmsg('Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif. Ulangi dari sampel 1.'); }
-  catch (e) { facing = prev; try { await openCam(); } catch (e2) { /* tetap */ } dmsg('Tidak bisa memakai kamera itu: ' + e.message, true); }
+  try { await switchCam(); dmsg('Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif. Ulangi dari sampel 1.'); }
+  catch (e) { dmsg('Tidak bisa mengganti kamera: ' + e.message, true); }
   $('cap').disabled = false;
 });
 $('cap').addEventListener('click', capture);
